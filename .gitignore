@@ -1,3 +1,6 @@
 /build
 /tools
+key.jks
+key.pass
+*.jks
 

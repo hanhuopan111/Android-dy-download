@@ -45,10 +45,16 @@ cd /d "%WORK%\out\dex"
 if errorlevel 1 goto :fail
 
 echo === [5/5] Sign ===
-if not exist "%ROOT%key.jks" (
-  "%J%\bin\keytool" -genkeypair -keystore "%ROOT%key.jks" -alias wmsave -keyalg RSA -keysize 2048 -validity 36500 -storepass REMOVED -keypass REMOVED -dname "CN=WatermarkSaver, O=han, C=CN"
+REM Read keystore password from key.pass (this file is NOT committed to git - never share it)
+if not exist "%ROOT%key.pass" (
+  echo ERROR: key.pass file not found
+  goto :fail
 )
-call "%BT%\apksigner" sign --ks "%ROOT%key.jks" --ks-pass pass:REMOVED --key-pass pass:REMOVED --out "%WORK%\out\apk\wmsave.apk" "%WORK%\out\apk\aligned.apk"
+set /p STORE_PASS=<"%ROOT%key.pass"
+if not exist "%ROOT%key.jks" (
+  "%J%\bin\keytool" -genkeypair -keystore "%ROOT%key.jks" -alias wmsave -keyalg RSA -keysize 2048 -validity 36500 -storepass %STORE_PASS% -keypass %STORE_PASS% -dname "CN=WatermarkSaver, O=han, C=CN"
+)
+call "%BT%\apksigner" sign --ks "%ROOT%key.jks" --ks-pass pass:%STORE_PASS% --key-pass pass:%STORE_PASS% --out "%WORK%\out\apk\wmsave.apk" "%WORK%\out\apk\aligned.apk"
 if errorlevel 1 goto :fail
 
 mkdir "%ROOT%build" 2>nul
