@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>无水印下载</title>
+<style>
+  * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+  body { margin:0; font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+         background:#f2f4f8; color:#1a1a2e; }
+  .header { background:linear-gradient(135deg,#2f80ed,#1e3c72); color:#fff;
+            padding:20px 16px 22px; }
+  .header h1 { margin:0; font-size:21px; letter-spacing:1px; }
+  .header p { margin:7px 0 0; font-size:12px; opacity:.85; }
+  .card { background:#fff; border-radius:14px; margin:14px; padding:15px;
+          box-shadow:0 2px 12px rgba(30,60,114,.08); }
+  textarea { width:100%; min-height:92px; border:1px solid #dde3ee; border-radius:10px;
+             padding:10px; font-size:14px; resize:none; background:#fafbfe; color:#1a1a2e;
+             font-family:inherit; }
+  textarea:focus { outline:none; border-color:#2f80ed; }
+  .btn { display:block; width:100%; border:none; border-radius:10px; padding:12px;
+         font-size:15px; font-weight:600; cursor:pointer; margin-top:10px; color:#fff; }
+  .btn-ghost { background:#eef1f7; color:#3a4a6b; }
+  .btn-primary { background:linear-gradient(135deg,#2f80ed,#1e3c72); }
+  .btn-video { background:linear-gradient(135deg,#ff5252,#c62828); }
+  .btn-image { background:linear-gradient(135deg,#00b894,#00856d); }
+  .btn-cover { background:#eef1f7; color:#3a4a6b; }
+  .btn:active { opacity:.8; }
+  #status { font-size:13px; color:#5a6b8c; margin-top:12px; line-height:1.6;
+            word-break:break-all; }
+  #loading { display:none; text-align:center; padding:16px; color:#7a8699; font-size:14px; }
+  .spin { display:inline-block; width:18px; height:18px; border:3px solid #dde3ee;
+          border-top-color:#2f80ed; border-radius:50%; vertical-align:-4px;
+          margin-right:8px; animation:r 0.8s linear infinite; }
+  @keyframes r { to { transform:rotate(360deg); } }
+  .hidden { display:none !important; }
+  .thumb { width:100%; border-radius:10px; max-height:230px; object-fit:cover; background:#eee; }
+  .info { margin:12px 0 2px; }
+  .title { font-size:15px; font-weight:600; line-height:1.45; }
+  .author { font-size:12px; color:#7a8699; margin-top:5px; }
+  .badge { display:inline-block; font-size:11px; background:#e8f4ff; color:#2f80ed;
+           border-radius:6px; padding:2px 8px; margin-top:8px; }
+  .img-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:12px; }
+  .img-grid img { width:100%; aspect-ratio:1; object-fit:cover; border-radius:8px;
+                  background:#eee; }
+  .tip { font-size:12px; color:#9aa5b8; line-height:1.7; margin-top:12px;
+         padding-top:10px; border-top:1px dashed #e2e7f0; }
+  .pline { font-size:13px; color:#3a4a6b; margin-top:10px; word-break:break-all; }
+  .pline.ok { color:#00856d; }
+  .pline.err { color:#c62828; }
+  .pbar { height:8px; background:#eef1f7; border-radius:4px; margin-top:5px;
+          overflow:hidden; }
+  .pfill { height:100%; background:linear-gradient(90deg,#2f80ed,#00b894);
+           border-radius:4px; transition:width .2s; }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>无水印下载</h1>
+  <p>支持抖音 视频 / 图集 · 打开 App 后先复制分享链接再粘贴</p>
+</div>
+
+<div class="card">
+  <textarea id="input" placeholder="打开抖音 → 点分享 → 复制链接&#10;然后把分享内容粘贴到这里…"></textarea>
+  <button class="btn btn-ghost" onclick="pasteClipboard()">📋 粘贴剪贴板</button>
+  <button class="btn btn-primary" onclick="doParse()">🔍 解析</button>
+  <div id="loading"><span class="spin"></span>解析中，请稍候…</div>
+  <div id="status"></div>
+</div>
+
+<div class="card hidden" id="resultCard">
+  <img class="thumb hidden" id="thumb" alt="封面"/>
+  <div class="info">
+    <div class="title" id="rTitle"></div>
+    <div class="author" id="rAuthor"></div>
+    <span class="badge" id="rType"></span>
+  </div>
+  <button class="btn btn-video hidden" id="btnVideo" onclick="downloadVideo()">⬇ 下载无水印视频</button>
+  <button class="btn btn-cover hidden" id="btnCover" onclick="downloadCover()">🖼 下载封面图</button>
+  <div id="imgSection" class="hidden">
+    <div class="img-grid" id="imgGrid"></div>
+    <button class="btn btn-image" onclick="downloadAllImages()">⬇ 下载全部图片</button>
+  </div>
+</div>
+
+<div class="card hidden" id="progCard">
+  <div class="title" style="font-size:14px;">⬇ 下载进度</div>
+  <div id="progList"></div>
+</div>
+
+<div class="card">
+  <div class="tip">
+    <b>使用说明</b><br>
+    1. 在抖音里找到想保存的视频/图集<br>
+    2. 点击「分享」→「复制链接」<br>
+    3. 回到本 App，点「粘贴剪贴板」再点「解析」<br>
+    4. 点下载按钮，完成后直接进入系统相册<br>
+    &nbsp;&nbsp;&nbsp;（相册 → 无水印下载 文件夹）<br>
+    5. 下载时请保持 App 在前台
+  </div>
+</div>
+
+<script>
+var data = null;
+var dlSeq = 0;
+var dl = {};   // dlId -> {label, pct, done, ok, msg}
+
+function $(id) { return document.getElementById(id); }
+
+function setStatus(t, color) {
+  $('status').innerHTML = t;
+  $('status').style.color = color || '#5a6b8c';
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function pasteClipboard() {
+  try {
+    var t = window.App.getClipboard();
+    if (t && t.trim()) {
+      $('input').value = t;
+      setStatus('已粘贴，点击「解析」');
+    } else {
+      setStatus('剪贴板里没有内容');
+    }
+  } catch (e) {
+    setStatus('读取剪贴板失败');
+  }
+}
+
+function doParse() {
+  var text = $('input').value.trim();
+  if (!text) { setStatus('请先粘贴分享链接'); return; }
+  $('loading').style.display = 'block';
+  $('resultCard').classList.add('hidden');
+  setStatus('');
+  window.App.parse(text);
+}
+
+window.__onParse = function (r) {
+  $('loading').style.display = 'none';
+  data = r;
+  if (!r.ok) {
+    setStatus('❌ 解析失败：' + r.error);
+    return;
+  }
+  $('resultCard').classList.remove('hidden');
+  $('rTitle').textContent = r.desc || '（无标题）';
+  $('rAuthor').textContent = '作者：' + (r.nickname || '未知') + '  ·  ' + r.id;
+
+  var hasVideo = r.videoUrl && r.videoUrl.length > 0;
+  var hasImages = r.images && r.images.length > 0;
+
+  if (hasVideo) {
+    $('rType').textContent = '视频';
+    $('btnVideo').classList.remove('hidden');
+    $('btnCover').classList.remove('hidden');
+    if (r.coverUrl) { $('thumb').src = r.coverUrl; $('thumb').classList.remove('hidden'); }
+    else $('thumb').classList.add('hidden');
+  } else {
+    $('rType').textContent = '图集';
+    $('btnVideo').classList.add('hidden');
+    $('btnCover').classList.add('hidden');
+    $('thumb').classList.add('hidden');
+  }
+
+  if (hasImages) {
+    $('imgSection').classList.remove('hidden');
+    var g = $('imgGrid');
+    g.innerHTML = '';
+    r.images.forEach(function (u) {
+      var im = document.createElement('img');
+      im.src = u;
+      g.appendChild(im);
+    });
+  } else {
+    $('imgSection').classList.add('hidden');
+  }
+
+  setStatus('✅ 解析成功，点击下方按钮下载');
+};
+
+function safeName() {
+  var n = (data.nickname || '抖音') + '-' + (data.desc || data.id || '');
+  n = n.replace(/[\\/:*?"<>|@#\s]+/g, '_').substring(0, 40);
+  return n || 'douyin';
+}
+
+function extOf(u) {
+  var m = u.match(/\.(webp|jpe?g|png|gif)(\?|$)/i);
+  return m ? m[1].toLowerCase() : 'jpg';
+}
+
+function startDownload(url, fallback, name, kind) {
+  if (!url) { setStatus('没有可下载的文件'); return; }
+  var id = 'dl' + (++dlSeq);
+  window.App.download(url, fallback || '', name, kind, id);
+  return id;
+}
+
+function track(id, label) {
+  dl[id] = {label: label, pct: 0, done: false, ok: null, msg: ''};
+  renderProg();
+}
+
+window.__onProgress = function (id, pct) {
+  if (dl[id]) { dl[id].pct = pct; renderProg(); }
+};
+
+window.__onDone = function (id, ok, msg) {
+  if (dl[id]) { dl[id].done = true; dl[id].ok = ok; dl[id].msg = msg; renderProg(); }
+};
+
+function renderProg() {
+  var ids = Object.keys(dl);
+  if (!ids.length) { $('progCard').classList.add('hidden'); return; }
+  $('progCard').classList.remove('hidden');
+  var h = '';
+  ids.forEach(function (id) {
+    var d = dl[id];
+    if (d.done) {
+      h += '<div class="pline ' + (d.ok ? 'ok' : 'err') + '">' + escHtml(d.label)
+        + (d.ok ? ' ✅ ' : ' ❌ ') + escHtml(d.msg) + '</div>';
+    } else {
+      h += '<div class="pline">' + escHtml(d.label) + '　' + d.pct + '%</div>'
+         + '<div class="pbar"><div class="pfill" style="width:' + d.pct + '%"></div></div>';
+    }
+  });
+  $('progList').innerHTML = h;
+}
+
+function downloadVideo() {
+  var id = startDownload(data.videoUrl, data.videoUrlSd, safeName() + '.mp4', '视频');
+  if (id) track(id, '视频（自动最高画质）');
+}
+
+function downloadCover() {
+  var id = startDownload(data.coverUrl, '', safeName() + '-封面.' + extOf(data.coverUrl), '封面');
+  if (id) track(id, '封面图');
+}
+
+function downloadAllImages() {
+  if (!data.images || !data.images.length) { setStatus('没有图片'); return; }
+  data.images.forEach(function (u, i) {
+    var id = startDownload(u, '', safeName() + '-' + (i + 1) + '.' + extOf(u), '图片');
+    if (id) track(id, '图片 ' + (i + 1) + '/' + data.images.length);
+  });
+}
+</script>
+</body>
+</html>
