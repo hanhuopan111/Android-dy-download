@@ -16,6 +16,9 @@ import android.webkit.WebViewClient;
 
 import org.json.JSONObject;
 
+import java.io.File;
+import java.io.FileOutputStream;
+
 public class MainActivity extends Activity {
 
     private WebView web;
@@ -92,16 +95,18 @@ public class MainActivity extends Activity {
          * window.__onProgress(dlId, percent)
          * window.__onDone(dlId, ok, msg)
          * fallbackUrl：高画质下载失败时自动降级重试的地址
+         * referer：平台 CDN 防盗链需要的请求头，可为空
          */
         @JavascriptInterface
         public void download(final String url, final String fallbackUrl,
-                             final String fileName, final String kind, final String dlId) {
+                             final String fileName, final String kind,
+                             final String referer, final String dlId) {
             new Thread(new Runnable() {
                 @Override
                 public void run() {
                     try {
                         Downloader.downloadToGallery(MainActivity.this, url, fallbackUrl,
-                                fileName, kind,
+                                fileName, kind, referer,
                                 new Downloader.Progress() {
                                     @Override
                                     public void onProgress(int percent) {
@@ -119,6 +124,53 @@ public class MainActivity extends Activity {
             }).start();
         }
 
+        /**
+         * 下载视频并转码为 GIF 动图保存到相册，回调同 download。
+         * 进度：下载占 0-60，转码占 60-100
+         */
+        @JavascriptInterface
+        public void downloadGif(final String url, final String fallbackUrl,
+                                final String fileName, final String referer,
+                                final String dlId) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    File tmp = null;
+                    File gifTmp = null;
+                    try {
+                        tmp = Downloader.downloadToCache(MainActivity.this, url,
+                                fallbackUrl, referer, new Downloader.Progress() {
+                                    @Override
+                                    public void onProgress(int percent) {
+                                        postJs("window.__onProgress('" + escapeJs(dlId)
+                                                + "'," + (percent * 60 / 100) + ")");
+                                    }
+                                });
+                        gifTmp = File.createTempFile("gif_", ".gif",
+                                MainActivity.this.getCacheDir());
+                        GifConverter.convert(tmp, new FileOutputStream(gifTmp),
+                                new GifConverter.Progress() {
+                                    @Override
+                                    public void onProgress(int percent) {
+                                        postJs("window.__onProgress('" + escapeJs(dlId)
+                                                + "'," + (60 + percent * 40 / 100) + ")");
+                                    }
+                                });
+                        Downloader.saveToMediaStore(MainActivity.this, gifTmp,
+                                fileName, true, null);
+                        postJs("window.__onDone('" + escapeJs(dlId)
+                                + "',true,'动图已保存到相册（相册/无水印下载）')");
+                    } catch (Exception e) {
+                        postJs("window.__onDone('" + escapeJs(dlId) + "',false,'"
+                                + escapeJs(String.valueOf(e.getMessage())) + "')");
+                    } finally {
+                        if (tmp != null) tmp.delete();
+                        if (gifTmp != null) gifTmp.delete();
+                    }
+                }
+            }).start();
+        }
+
         private void postJs(final String js) {
             main.post(new Runnable() {
                 @Override
@@ -131,28 +183,20 @@ public class MainActivity extends Activity {
 
     private String doParse(String text) {
         try {
-            if (text == null || text.trim().isEmpty()) {
-                throw new Exception("请先粘贴分享链接");
-            }
-            String url = Parser.extractShareUrl(text);
-            if (url == null) {
-                throw new Exception("没有找到抖音链接，请复制完整的分享口令");
-            }
-            String finalUrl = Parser.resolveUrl(url);
-            String id = Parser.extractAwemeId(finalUrl);
-            if (id == null) {
-                throw new Exception("无法识别作品ID：" + finalUrl);
-            }
-            Parser.Item item = Parser.fetchItem(id);
+            // 平台路由：根据链接识别抖音/B站/小红书并分发到对应解析器
+            PlatformParser.Item item = PlatformParser.parse(text);
 
             JSONObject o = new JSONObject();
             o.put("ok", true);
-            o.put("id", item.awemeId);
+            o.put("platform", item.platform);
+            o.put("platformName", item.platformName);
+            o.put("id", item.id);
             o.put("desc", item.desc);
             o.put("nickname", item.nickname);
             o.put("videoUrl", item.videoUrl);
             o.put("videoUrlSd", item.videoUrlSd);
             o.put("coverUrl", item.coverUrl);
+            o.put("referer", item.referer);
             o.put("images", new org.json.JSONArray(item.imageUrls));
             return o.toString();
         } catch (Exception e) {

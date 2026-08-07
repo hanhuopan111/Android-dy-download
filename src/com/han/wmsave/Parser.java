@@ -3,40 +3,17 @@ package com.han.wmsave;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 抖音解析引擎：
+ * 抖音解析引擎（平台路由见 PlatformParser）：
  * 1. 从分享文本中提取链接
  * 2. 跟随短链接重定向得到最终页面，提取视频ID
  * 3. 抓取分享页 HTML，从 window._ROUTER_DATA 中提取视频/图集数据
  * 4. 把 playwm 水印地址替换为 play 得到无水印直链
  */
 public class Parser {
-
-    public static class Item {
-        public String awemeId;
-        public String desc = "";
-        public String nickname = "";
-        public String videoUrl = "";   // 无水印视频直链（最高画质档）
-        public String videoUrlSd = ""; // 兜底：默认720p档
-        public String coverUrl = "";   // 封面图
-        public List<String> imageUrls = new ArrayList<String>();
-        public boolean hasVideo = false;
-    }
-
-    private static final String UA =
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
-                    + "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
-    private static final int TIMEOUT = 15000;
 
     private static final Pattern URL_PAT = Pattern.compile(
             "https?://[\\w\\-./?%&=#~_:+@]+douyin[\\w\\-./?%&=#~_:+@]*");
@@ -56,18 +33,18 @@ public class Parser {
         return null;
     }
 
-    /** 跟随重定向，返回最终 URL */
-    public static String resolveUrl(String shortUrl) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(shortUrl).openConnection();
-        c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent", UA);
-        c.setConnectTimeout(TIMEOUT);
-        c.setReadTimeout(TIMEOUT);
-        int code = c.getResponseCode();
-        String finalUrl = c.getURL().toString();
-        c.disconnect();
-        if (code >= 400) throw new Exception("链接访问失败(HTTP " + code + ")");
-        return finalUrl;
+    /** 解析抖音分享文本，返回统一 Item */
+    public static PlatformParser.Item parseDouyin(String text) throws Exception {
+        String url = extractShareUrl(text);
+        if (url == null) {
+            throw new Exception("没有找到抖音链接，请复制完整的分享口令");
+        }
+        String finalUrl = PlatformParser.resolveUrl(url);
+        String id = extractAwemeId(finalUrl);
+        if (id == null) {
+            throw new Exception("无法识别作品ID：" + finalUrl);
+        }
+        return fetchItem(id);
     }
 
     /** 从最终 URL 中提取视频 ID，找不到返回 null */
@@ -78,9 +55,9 @@ public class Parser {
     }
 
     /** 抓取并解析作品数据 */
-    public static Item fetchItem(String awemeId) throws Exception {
+    public static PlatformParser.Item fetchItem(String awemeId) throws Exception {
         // 统一用 iesdouyin 分享页抓取（无需登录，页面内嵌完整数据）
-        String html = httpGetText(
+        String html = PlatformParser.httpGetText(
                 "https://www.iesdouyin.com/share/video/" + awemeId + "/",
                 "https://www.iesdouyin.com/");
         if (html == null || html.isEmpty()) throw new Exception("页面为空，请检查网络");
@@ -93,7 +70,7 @@ public class Parser {
         if (vi < 0) throw new Exception("页面数据未找到，作品可能已删除或需更新应用");
         int start = html.indexOf('{', vi);
         if (start < 0) throw new Exception("页面数据结构异常");
-        int end = matchBrace(html, start);
+        int end = PlatformParser.matchBrace(html, start);
         if (end < 0) throw new Exception("页面数据结构异常");
 
         JSONObject videoInfo = new JSONObject(html.substring(start, end + 1));
@@ -103,8 +80,10 @@ public class Parser {
         }
 
         JSONObject it = items.getJSONObject(0);
-        Item item = new Item();
-        item.awemeId = it.optString("aweme_id", awemeId);
+        PlatformParser.Item item = new PlatformParser.Item();
+        item.platform = "douyin";
+        item.platformName = "抖音";
+        item.id = it.optString("aweme_id", awemeId);
         item.desc = it.optString("desc", "");
         JSONObject author = it.optJSONObject("author");
         if (author != null) item.nickname = author.optString("nickname", "");
@@ -181,49 +160,5 @@ public class Parser {
             if (!u.isEmpty()) best = u;
         }
         return best;
-    }
-
-    /** 从 start 位置匹配与之配对的大括号，返回其下标；找不到返回 -1 */
-    private static int matchBrace(String s, int start) {
-        int depth = 0;
-        boolean inStr = false;
-        boolean esc = false;
-        for (int i = start; i < s.length(); i++) {
-            char ch = s.charAt(i);
-            if (inStr) {
-                if (esc) { esc = false; continue; }
-                if (ch == '\\') { esc = true; continue; }
-                if (ch == '"') inStr = false;
-                continue;
-            }
-            if (ch == '"') { inStr = true; continue; }
-            if (ch == '{') depth++;
-            else if (ch == '}') {
-                depth--;
-                if (depth == 0) return i;
-            }
-        }
-        return -1;
-    }
-
-    private static String httpGetText(String url, String referer) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
-        c.setInstanceFollowRedirects(true);
-        c.setRequestProperty("User-Agent", UA);
-        if (referer != null) c.setRequestProperty("Referer", referer);
-        c.setConnectTimeout(TIMEOUT);
-        c.setReadTimeout(TIMEOUT);
-        int code = c.getResponseCode();
-        InputStream in = (code >= 400) ? c.getErrorStream() : c.getInputStream();
-        ByteArrayOutputStream bos = new ByteArrayOutputStream();
-        byte[] buf = new byte[8192];
-        int n;
-        while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
-        in.close();
-        c.disconnect();
-        String text = new String(bos.toByteArray(), StandardCharsets.UTF_8);
-        // 去掉 UTF-8 BOM
-        if (!text.isEmpty() && text.charAt(0) == '\uFEFF') text = text.substring(1);
-        return text;
     }
 }

@@ -1,5 +1,6 @@
 /build
 /tools
+/backup
 key.jks
 key.pass
 *.jks

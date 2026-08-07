@@ -23,6 +23,7 @@
   .btn-ghost { background:#eef1f7; color:#3a4a6b; }
   .btn-primary { background:linear-gradient(135deg,#2f80ed,#1e3c72); }
   .btn-video { background:linear-gradient(135deg,#ff5252,#c62828); }
+  .btn-gif { background:linear-gradient(135deg,#9b59b6,#6c3483); }
   .btn-image { background:linear-gradient(135deg,#00b894,#00856d); }
   .btn-cover { background:#eef1f7; color:#3a4a6b; }
   .btn:active { opacity:.8; }
@@ -57,7 +58,7 @@
 <body>
 <div class="header">
   <h1>无水印下载</h1>
-  <p>支持抖音 视频 / 图集 · 打开 App 后先复制分享链接再粘贴</p>
+  <p>支持 抖音 / B站 / 小红书 · 视频 / 图集 / 动图</p>
 </div>
 
 <div class="card">
@@ -76,6 +77,7 @@
     <span class="badge" id="rType"></span>
   </div>
   <button class="btn btn-video hidden" id="btnVideo" onclick="downloadVideo()">⬇ 下载无水印视频</button>
+  <button class="btn btn-gif hidden" id="btnGif" onclick="downloadGif()">🎞 保存为动图 GIF</button>
   <button class="btn btn-cover hidden" id="btnCover" onclick="downloadCover()">🖼 下载封面图</button>
   <div id="imgSection" class="hidden">
     <div class="img-grid" id="imgGrid"></div>
@@ -91,12 +93,14 @@
 <div class="card">
   <div class="tip">
     <b>使用说明</b><br>
-    1. 在抖音里找到想保存的视频/图集<br>
+    1. 在 抖音 / B站 / 小红书 里找到想保存的视频或图集<br>
     2. 点击「分享」→「复制链接」<br>
     3. 回到本 App，点「粘贴剪贴板」再点「解析」<br>
-    4. 点下载按钮，完成后直接进入系统相册<br>
+    4. 视频支持：下载无水印视频 / 保存为动图 GIF / 下载封面<br>
+    &nbsp;&nbsp;&nbsp;图集支持：一键下载全部图片<br>
+    5. 完成后直接进入系统相册<br>
     &nbsp;&nbsp;&nbsp;（相册 → 无水印下载 文件夹）<br>
-    5. 下载时请保持 App 在前台
+    6. 下载时请保持 App 在前台
   </div>
 </div>
 
@@ -154,14 +158,16 @@ window.__onParse = function (r) {
   var hasImages = r.images && r.images.length > 0;
 
   if (hasVideo) {
-    $('rType').textContent = '视频';
+    $('rType').textContent = (r.platformName || '') + ' · 视频';
     $('btnVideo').classList.remove('hidden');
+    $('btnGif').classList.remove('hidden');
     $('btnCover').classList.remove('hidden');
     if (r.coverUrl) { $('thumb').src = r.coverUrl; $('thumb').classList.remove('hidden'); }
     else $('thumb').classList.add('hidden');
   } else {
-    $('rType').textContent = '图集';
+    $('rType').textContent = (r.platformName || '') + ' · 图集';
     $('btnVideo').classList.add('hidden');
+    $('btnGif').classList.add('hidden');
     $('btnCover').classList.add('hidden');
     $('thumb').classList.add('hidden');
   }
@@ -183,9 +189,9 @@ window.__onParse = function (r) {
 };
 
 function safeName() {
-  var n = (data.nickname || '抖音') + '-' + (data.desc || data.id || '');
+  var n = (data.nickname || data.platformName || '作品') + '-' + (data.desc || data.id || '');
   n = n.replace(/[\\/:*?"<>|@#\s]+/g, '_').substring(0, 40);
-  return n || 'douyin';
+  return n || 'media';
 }
 
 function extOf(u) {
@@ -196,8 +202,17 @@ function extOf(u) {
 function startDownload(url, fallback, name, kind) {
   if (!url) { setStatus('没有可下载的文件'); return; }
   var id = 'dl' + (++dlSeq);
-  window.App.download(url, fallback || '', name, kind, id);
+  window.App.download(url, fallback || '', name, kind, data.referer || '', id);
   return id;
+}
+
+/** 下载视频并转码为 GIF 动图（走 downloadGif 原生桥） */
+function downloadGif() {
+  if (!data.videoUrl) { setStatus('没有可下载的视频'); return; }
+  var id = 'dl' + (++dlSeq);
+  window.App.downloadGif(data.videoUrl, data.videoUrlSd || '',
+      safeName() + '.gif', data.referer || '', id);
+  track(id, '动图 GIF（约10秒生成）');
 }
 
 function track(id, label) {

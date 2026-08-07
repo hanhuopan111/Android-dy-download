@@ -32,16 +32,17 @@ public class Downloader {
                     + "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36";
 
     public static void downloadToGallery(Context ctx, String url, String fallbackUrl,
-                                         String fileName, String kind, Progress p) throws Exception {
+                                         String fileName, String kind, String referer,
+                                         Progress p) throws Exception {
         File tmp = File.createTempFile("dl_", ".tmp", ctx.getCacheDir());
         try {
             try {
-                downloadToFile(url, tmp, p);
+                downloadToFile(url, tmp, referer, p);
             } catch (Exception e) {
                 // 高画质地址失败时，降级重试默认画质地址
                 if (fallbackUrl != null && !fallbackUrl.isEmpty()
                         && !fallbackUrl.equals(url)) {
-                    downloadToFile(fallbackUrl, tmp, p);
+                    downloadToFile(fallbackUrl, tmp, referer, p);
                 } else {
                     throw e;
                 }
@@ -53,11 +54,37 @@ public class Downloader {
         }
     }
 
-    /** 网络下载到临时文件，汇报进度（0-100） */
-    private static long downloadToFile(String url, File dest, Progress p) throws Exception {
+    /** 下载到缓存临时文件并返回（供动图转码等场景使用），失败时自动降级 fallbackUrl */
+    public static File downloadToCache(Context ctx, String url, String fallbackUrl,
+                                       String referer, Progress p) throws Exception {
+        File tmp = File.createTempFile("dl_", ".tmp", ctx.getCacheDir());
+        try {
+            try {
+                downloadToFile(url, tmp, referer, p);
+            } catch (Exception e) {
+                if (fallbackUrl != null && !fallbackUrl.isEmpty()
+                        && !fallbackUrl.equals(url)) {
+                    downloadToFile(fallbackUrl, tmp, referer, p);
+                } else {
+                    throw e;
+                }
+            }
+            return tmp;
+        } catch (Exception e) {
+            tmp.delete();
+            throw e;
+        }
+    }
+
+    /** 网络下载到临时文件，汇报进度（0-100）；referer 非空时附带请求头 */
+    private static long downloadToFile(String url, File dest, String referer,
+                                       Progress p) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
         c.setInstanceFollowRedirects(true);
         c.setRequestProperty("User-Agent", UA);
+        if (referer != null && !referer.isEmpty()) {
+            c.setRequestProperty("Referer", referer);
+        }
         c.setConnectTimeout(15000);
         c.setReadTimeout(60000);
         int code = c.getResponseCode();
@@ -90,9 +117,9 @@ public class Downloader {
         return total;
     }
 
-    /** 保存到系统相册 */
-    private static void saveToMediaStore(Context ctx, File file, String fileName,
-                                         boolean isImage, Progress p) throws Exception {
+    /** 保存到系统相册（isImage=true 存 Pictures，否则存 Movies） */
+    public static void saveToMediaStore(Context ctx, File file, String fileName,
+                                        boolean isImage, Progress p) throws Exception {
         String mime = mimeOf(fileName, isImage);
         if (Build.VERSION.SDK_INT >= 29) {
             // Android 10+：MediaStore 直接写入相册，无需权限
