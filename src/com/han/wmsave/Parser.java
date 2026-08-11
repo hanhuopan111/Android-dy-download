@@ -92,8 +92,9 @@ public class Parser {
         if (video != null) {
             item.hasVideo = true;
             String wmUrl = firstUrl(video.optJSONObject("play_addr"));
-            item.videoUrl = toWatermarkFree(wmUrl);      // 最高画质
-            item.videoUrlSd = wmUrl.replace("/playwm/", "/play/"); // 720p兜底
+            String bestRateUrl = bestBitRateUrl(video);
+            item.videoUrl = toWatermarkFree(bestRateUrl.isEmpty() ? wmUrl : bestRateUrl);
+            item.videoUrlSd = toWatermarkFree(wmUrl);
             item.coverUrl = firstUrl(video.optJSONObject("cover"));
             if (item.coverUrl.isEmpty()) item.coverUrl = firstUrl(video.optJSONObject("cover_thumb"));
         }

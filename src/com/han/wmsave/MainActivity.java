@@ -4,12 +4,18 @@ import android.app.Activity;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.graphics.Color;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.MediaStore;
+import android.view.View;
 import android.webkit.JavascriptInterface;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -18,164 +24,285 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
 
     private WebView web;
     private final Handler main = new Handler(Looper.getMainLooper());
+    private final ExecutorService parseExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService downloadExecutor = Executors.newFixedThreadPool(3);
+    private String pendingSharedText = "";
+    private boolean pageReady;
 
     @Override
-    protected void onCreate(Bundle b) {
-        super.onCreate(b);
-
-        // Android 7-9 保存到相册需要存储权限
-        if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT < 29) {
-            if (checkSelfPermission("android.permission.WRITE_EXTERNAL_STORAGE")
-                    != PackageManager.PERMISSION_GRANTED) {
-                requestPermissions(new String[]{"android.permission.WRITE_EXTERNAL_STORAGE"}, 2);
-            }
-        }
+    protected void onCreate(Bundle state) {
+        super.onCreate(state);
+        configureSystemBars();
+        requestLegacyStoragePermission();
+        captureSharedText(getIntent());
 
         web = new WebView(this);
-        WebSettings s = web.getSettings();
-        s.setJavaScriptEnabled(true);
-        s.setDomStorageEnabled(true);
-        s.setAllowFileAccess(true);
+        WebSettings settings = web.getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setAllowFileAccess(true);
+        settings.setAllowContentAccess(false);
+        settings.setAllowFileAccessFromFileURLs(false);
+        settings.setAllowUniversalAccessFromFileURLs(false);
+        settings.setMediaPlaybackRequiresUserGesture(true);
+        settings.setBuiltInZoomControls(false);
+        settings.setDisplayZoomControls(false);
+        if (Build.VERSION.SDK_INT >= 21) {
+            settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            settings.setSafeBrowsingEnabled(true);
+        }
+
         web.addJavascriptInterface(new Bridge(), "App");
-        web.setWebViewClient(new WebViewClient());
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                pageReady = true;
+                deliverSharedText();
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                if ("file".equals(uri.getScheme()) && "android_asset".equals(uri.getHost())) {
+                    return false;
+                }
+                openExternal(uri);
+                return true;
+            }
+
+            @Override
+            @SuppressWarnings("deprecation")
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                Uri uri = Uri.parse(url);
+                if (url.startsWith("file:///android_asset/")) return false;
+                openExternal(uri);
+                return true;
+            }
+        });
         setContentView(web);
         web.loadUrl("file:///android_asset/index.html");
     }
 
-    @Override
-    public void onBackPressed() {
-        if (web != null && web.canGoBack()) {
-            web.goBack();
-        } else {
-            super.onBackPressed();
+    private void configureSystemBars() {
+        getWindow().setStatusBarColor(Color.rgb(238, 244, 255));
+        getWindow().setNavigationBarColor(Color.WHITE);
+        if (Build.VERSION.SDK_INT >= 23) {
+            getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            getWindow().getDecorView().setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
         }
     }
 
-    /** 给 JS 调用的原生桥 */
-    private class Bridge {
+    private void requestLegacyStoragePermission() {
+        if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT < 29
+                && checkSelfPermission("android.permission.WRITE_EXTERNAL_STORAGE")
+                != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{"android.permission.WRITE_EXTERNAL_STORAGE"}, 2);
+        }
+    }
 
-        /** 读取剪贴板内容 */
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        captureSharedText(intent);
+        deliverSharedText();
+    }
+
+    private void captureSharedText(Intent intent) {
+        if (intent != null && Intent.ACTION_SEND.equals(intent.getAction())
+                && "text/plain".equals(intent.getType())) {
+            String text = intent.getStringExtra(Intent.EXTRA_TEXT);
+            if (text != null && !text.trim().isEmpty()) pendingSharedText = text.trim();
+        }
+    }
+
+    private void deliverSharedText() {
+        if (!pageReady || web == null || pendingSharedText.isEmpty()) return;
+        String text = pendingSharedText;
+        pendingSharedText = "";
+        web.evaluateJavascript("window.__setSharedText(" + JSONObject.quote(text) + ")", null);
+    }
+
+    private void openExternal(Uri uri) {
+        try {
+            if (uri != null && ("https".equals(uri.getScheme()) || "http".equals(uri.getScheme()))) {
+                startActivity(new Intent(Intent.ACTION_VIEW, uri));
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    @Override
+    public void onBackPressed() {
+        if (web != null && web.canGoBack()) web.goBack();
+        else super.onBackPressed();
+    }
+
+    @Override
+    protected void onDestroy() {
+        parseExecutor.shutdownNow();
+        downloadExecutor.shutdownNow();
+        if (web != null) {
+            web.removeJavascriptInterface("App");
+            web.stopLoading();
+            web.destroy();
+            web = null;
+        }
+        super.onDestroy();
+    }
+
+    private class Bridge {
         @JavascriptInterface
         public String getClipboard() {
             try {
-                ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                ClipData d = cm.getPrimaryClip();
-                if (d != null && d.getItemCount() > 0) {
-                    return String.valueOf(d.getItemAt(0).coerceToText(MainActivity.this));
+                ClipboardManager manager = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                ClipData data = manager.getPrimaryClip();
+                if (data != null && data.getItemCount() > 0) {
+                    return String.valueOf(data.getItemAt(0).coerceToText(MainActivity.this));
                 }
             } catch (Exception ignored) {
             }
             return "";
         }
 
-        /** 解析分享文本，回调 window.__onParse(json) */
         @JavascriptInterface
         public void parse(final String text) {
-            new Thread(new Runnable() {
+            parseExecutor.execute(new Runnable() {
                 @Override
                 public void run() {
                     final String result = doParse(text);
-                    main.post(new Runnable() {
-                        @Override
-                        public void run() {
-                            web.evaluateJavascript("window.__onParse(" + result + ")", null);
-                        }
-                    });
+                    postJs("window.__onParse(" + result + ")");
                 }
-            }).start();
+            });
         }
 
-        /**
-         * 下载并保存到相册，回调：
-         * window.__onProgress(dlId, percent)
-         * window.__onDone(dlId, ok, msg)
-         * fallbackUrl：高画质下载失败时自动降级重试的地址
-         * referer：平台 CDN 防盗链需要的请求头，可为空
-         */
         @JavascriptInterface
         public void download(final String url, final String fallbackUrl,
                              final String fileName, final String kind,
-                             final String referer, final String dlId) {
-            new Thread(new Runnable() {
+                             final String referer, final String downloadId) {
+            downloadExecutor.execute(new Runnable() {
                 @Override
                 public void run() {
                     try {
                         Downloader.downloadToGallery(MainActivity.this, url, fallbackUrl,
-                                fileName, kind, referer,
-                                new Downloader.Progress() {
+                                fileName, kind, referer, new Downloader.Progress() {
                                     @Override
                                     public void onProgress(int percent) {
-                                        postJs("window.__onProgress('" + escapeJs(dlId)
-                                                + "'," + percent + ")");
+                                        postProgress(downloadId, percent);
                                     }
                                 });
-                        postJs("window.__onDone('" + escapeJs(dlId)
-                                + "',true,'已保存到相册（相册/无水印下载）')");
+                        postDone(downloadId, true, "已保存到相册（相册/无水印下载）");
                     } catch (Exception e) {
-                        postJs("window.__onDone('" + escapeJs(dlId) + "',false,'"
-                                + escapeJs(String.valueOf(e.getMessage())) + "')");
+                        postDone(downloadId, false, friendlyError(e));
                     }
                 }
-            }).start();
+            });
         }
 
-        /**
-         * 下载视频并转码为 GIF 动图保存到相册，回调同 download。
-         * 进度：下载占 0-60，转码占 60-100
-         */
         @JavascriptInterface
         public void downloadGif(final String url, final String fallbackUrl,
                                 final String fileName, final String referer,
-                                final String dlId) {
-            new Thread(new Runnable() {
+                                final String downloadId, final int width,
+                                final int seconds, final int fps) {
+            downloadExecutor.execute(new Runnable() {
                 @Override
                 public void run() {
-                    File tmp = null;
-                    File gifTmp = null;
+                    File video = null;
+                    File gif = null;
                     try {
-                        tmp = Downloader.downloadToCache(MainActivity.this, url,
+                        video = Downloader.downloadToCache(MainActivity.this, url,
                                 fallbackUrl, referer, new Downloader.Progress() {
                                     @Override
                                     public void onProgress(int percent) {
-                                        postJs("window.__onProgress('" + escapeJs(dlId)
-                                                + "'," + (percent * 60 / 100) + ")");
+                                        postProgress(downloadId, percent * 55 / 100);
                                     }
                                 });
-                        gifTmp = File.createTempFile("gif_", ".gif",
-                                MainActivity.this.getCacheDir());
-                        GifConverter.convert(tmp, new FileOutputStream(gifTmp),
+                        gif = File.createTempFile("gif_", ".gif", getCacheDir());
+                        FileOutputStream output = new FileOutputStream(gif);
+                        GifConverter.convert(video, output, width, seconds, fps,
                                 new GifConverter.Progress() {
                                     @Override
                                     public void onProgress(int percent) {
-                                        postJs("window.__onProgress('" + escapeJs(dlId)
-                                                + "'," + (60 + percent * 40 / 100) + ")");
+                                        postProgress(downloadId, 55 + percent * 45 / 100);
                                     }
                                 });
-                        Downloader.saveToMediaStore(MainActivity.this, gifTmp,
+                        Downloader.saveToMediaStore(MainActivity.this, gif,
                                 fileName, true, null);
-                        postJs("window.__onDone('" + escapeJs(dlId)
-                                + "',true,'动图已保存到相册（相册/无水印下载）')");
+                        postDone(downloadId, true, "动图已保存到相册（相册/无水印下载）");
                     } catch (Exception e) {
-                        postJs("window.__onDone('" + escapeJs(dlId) + "',false,'"
-                                + escapeJs(String.valueOf(e.getMessage())) + "')");
+                        postDone(downloadId, false, friendlyError(e));
                     } finally {
-                        if (tmp != null) tmp.delete();
-                        if (gifTmp != null) gifTmp.delete();
+                        if (video != null) video.delete();
+                        if (gif != null) gif.delete();
                     }
                 }
-            }).start();
+            });
         }
 
-        private void postJs(final String js) {
+        /** 下载图片后在本机进行 2× 缩放和轻度锐化，以高质量 JPG 保存。 */
+        @JavascriptInterface
+        public void enhanceImage(final String url, final String fileName,
+                                 final String referer, final String downloadId,
+                                 final int scale, final int strength) {
+            downloadExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    File source = null;
+                    File enhanced = null;
+                    try {
+                        source = Downloader.downloadToCache(MainActivity.this, url, "", referer,
+                                new Downloader.Progress() {
+                                    @Override
+                                    public void onProgress(int percent) {
+                                        postProgress(downloadId, percent * 35 / 100);
+                                    }
+                                });
+                        enhanced = File.createTempFile("enhanced_", ".jpg", getCacheDir());
+                        ImageEnhancer.enhance(source, enhanced, scale, strength,
+                                new ImageEnhancer.Progress() {
+                                    @Override
+                                    public void onProgress(int percent) {
+                                        postProgress(downloadId, 35 + percent * 65 / 100);
+                                    }
+                                });
+                        Downloader.saveToMediaStore(MainActivity.this, enhanced,
+                                fileName, true, null);
+                        postDone(downloadId, true, "增强版已保存到相册（相册/无水印下载）");
+                    } catch (Exception e) {
+                        postDone(downloadId, false, friendlyError(e));
+                    } finally {
+                        if (source != null) source.delete();
+                        if (enhanced != null) enhanced.delete();
+                    }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void openGallery() {
             main.post(new Runnable() {
                 @Override
                 public void run() {
-                    web.evaluateJavascript(js, null);
+                    try {
+                        Intent intent = new Intent(Intent.ACTION_VIEW);
+                        intent.setDataAndType(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, "image/*");
+                        startActivity(intent);
+                    } catch (Exception e) {
+                        postJs("window.__toast('没有找到可用的相册应用','error')");
+                    }
                 }
             });
         }
@@ -183,40 +310,59 @@ public class MainActivity extends Activity {
 
     private String doParse(String text) {
         try {
-            // 平台路由：根据链接识别抖音/B站/小红书并分发到对应解析器
             PlatformParser.Item item = PlatformParser.parse(text);
-
-            JSONObject o = new JSONObject();
-            o.put("ok", true);
-            o.put("platform", item.platform);
-            o.put("platformName", item.platformName);
-            o.put("id", item.id);
-            o.put("desc", item.desc);
-            o.put("nickname", item.nickname);
-            o.put("videoUrl", item.videoUrl);
-            o.put("videoUrlSd", item.videoUrlSd);
-            o.put("coverUrl", item.coverUrl);
-            o.put("referer", item.referer);
-            o.put("images", new org.json.JSONArray(item.imageUrls));
-            return o.toString();
+            JSONObject result = new JSONObject();
+            result.put("ok", true);
+            result.put("platform", item.platform);
+            result.put("platformName", item.platformName);
+            result.put("id", item.id);
+            result.put("desc", item.desc);
+            result.put("nickname", item.nickname);
+            result.put("videoUrl", item.videoUrl);
+            result.put("videoUrlSd", item.videoUrlSd);
+            result.put("coverUrl", item.coverUrl);
+            result.put("referer", item.referer);
+            result.put("images", new org.json.JSONArray(item.imageUrls));
+            return result.toString();
         } catch (Exception e) {
             try {
-                JSONObject o = new JSONObject();
-                o.put("ok", false);
-                o.put("error", e.getMessage() == null ? "未知错误" : e.getMessage());
-                return o.toString();
+                JSONObject result = new JSONObject();
+                result.put("ok", false);
+                result.put("error", friendlyError(e));
+                return result.toString();
             } catch (Exception ignored) {
-                return "{\"ok\":false,\"error\":\"解析失败\"}";
+                return "{\"ok\":false,\"error\":\"解析失败，请稍后重试\"}";
             }
         }
     }
 
-    private static String escapeJs(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\")
-                .replace("'", "\\'")
-                .replace("\"", "\\\"")
-                .replace("\n", "\\n")
-                .replace("\r", "\\r");
+    private void postProgress(String id, int percent) {
+        postJs("window.__onProgress(" + JSONObject.quote(id) + "," + percent + ")");
+    }
+
+    private void postDone(String id, boolean ok, String message) {
+        postJs("window.__onDone(" + JSONObject.quote(id) + "," + ok + ","
+                + JSONObject.quote(message) + ")");
+    }
+
+    private void postJs(final String script) {
+        main.post(new Runnable() {
+            @Override
+            public void run() {
+                if (web != null) web.evaluateJavascript(script, null);
+            }
+        });
+    }
+
+    private static String friendlyError(Exception error) {
+        String message = error.getMessage();
+        if (message == null || message.trim().isEmpty()) return "操作失败，请稍后重试";
+        if (message.contains("Unable to resolve host") || message.contains("failed to connect")) {
+            return "网络连接失败，请检查网络后重试";
+        }
+        if (message.contains("timeout") || message.contains("timed out")) {
+            return "请求超时，请稍后重试";
+        }
+        return message;
     }
 }

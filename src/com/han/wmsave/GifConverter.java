@@ -10,7 +10,7 @@ import java.io.OutputStream;
  * 视频转 GIF 动图：
  * 1. MediaMetadataRetriever 按固定间隔抽帧
  * 2. AnimatedGifEncoder 逐帧编码
- * 参数：输出宽度 480px、10fps、最长 8 秒（避免生成时间过长）
+ * 输出宽度、帧率和时长由用户选择，并在安全范围内限制。
  */
 public class GifConverter {
 
@@ -19,19 +19,20 @@ public class GifConverter {
         void onProgress(int percent);
     }
 
-    public static final int MAX_WIDTH = 480;
-    public static final int FPS = 10;
-    public static final long MAX_DURATION_MS = 8000;
-
     /** 将视频文件转码为 GIF，写入指定输出流 */
-    public static void convert(File video, OutputStream out, Progress p) throws Exception {
+    public static void convert(File video, OutputStream out, int requestedWidth,
+                               int requestedSeconds, int requestedFps,
+                               Progress p) throws Exception {
+        int maxWidth = Math.max(240, Math.min(640, requestedWidth));
+        int fps = Math.max(6, Math.min(12, requestedFps));
+        long maxDurationMs = Math.max(3000, Math.min(12000, requestedSeconds * 1000L));
         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
         try {
             mmr.setDataSource(video.getAbsolutePath());
             String dur = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
-            long duration = dur == null ? MAX_DURATION_MS : Long.parseLong(dur);
-            long end = Math.min(duration, MAX_DURATION_MS);
-            int frameMs = 1000 / FPS;
+            long duration = dur == null ? maxDurationMs : Long.parseLong(dur);
+            long end = Math.min(duration, maxDurationMs);
+            int frameMs = 1000 / fps;
             int total = (int) (end / frameMs) + 1;
 
             AnimatedGifEncoder enc = new AnimatedGifEncoder();
@@ -45,7 +46,7 @@ public class GifConverter {
                 Bitmap bmp = mmr.getFrameAtTime(t * 1000,
                         MediaMetadataRetriever.OPTION_CLOSEST);
                 if (bmp != null) {
-                    Bitmap scaled = scaleToWidth(bmp, MAX_WIDTH);
+                    Bitmap scaled = scaleToWidth(bmp, maxWidth);
                     enc.addFrame(scaled);
                     if (prev != null && !prev.isRecycled()) prev.recycle();
                     prev = scaled;

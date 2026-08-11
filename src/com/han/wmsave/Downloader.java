@@ -15,6 +15,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Locale;
 
 /**
  * 下载并直接保存到系统相册：
@@ -81,9 +82,16 @@ public class Downloader {
     /** 网络下载到临时文件，汇报进度（0-100）；referer 非空时附带请求头 */
     private static long downloadToFile(String url, File dest, String referer,
                                        Progress p) throws Exception {
-        HttpURLConnection c = (HttpURLConnection) new URL(url).openConnection();
+        URL parsed = new URL(url);
+        String protocol = parsed.getProtocol().toLowerCase(Locale.US);
+        if (!"https".equals(protocol) && !"http".equals(protocol)) {
+            throw new Exception("不支持的下载地址");
+        }
+        HttpURLConnection c = (HttpURLConnection) parsed.openConnection();
         c.setInstanceFollowRedirects(true);
         c.setRequestProperty("User-Agent", UA);
+        c.setRequestProperty("Accept", "*/*");
+        c.setRequestProperty("Accept-Encoding", "identity");
         if (referer != null && !referer.isEmpty()) {
             c.setRequestProperty("Referer", referer);
         }
@@ -106,7 +114,7 @@ public class Downloader {
                     int pct = (int) (done * 100 / total);
                     if (pct != lastPct) {
                         lastPct = pct;
-                        p.onProgress(pct);
+                        if (p != null) p.onProgress(pct);
                     }
                 }
             }
@@ -122,6 +130,7 @@ public class Downloader {
     /** 保存到系统相册（isImage=true 存 Pictures，否则存 Movies） */
     public static void saveToMediaStore(Context ctx, File file, String fileName,
                                         boolean isImage, Progress p) throws Exception {
+        fileName = sanitizeFileName(fileName, isImage ? "image.jpg" : "video.mp4");
         String mime = mimeOf(fileName, isImage);
         if (Build.VERSION.SDK_INT >= 29) {
             // Android 10+：MediaStore 直接写入相册，无需权限
@@ -184,5 +193,20 @@ public class Downloader {
         }
         if (f.endsWith(".webm")) return "video/webm";
         return "video/mp4";
+    }
+
+    /** 原生层再次清理文件名，避免非法字符和路径穿越。 */
+    public static String sanitizeFileName(String value, String fallback) {
+        String name = value == null ? "" : value.trim();
+        name = name.replaceAll("[\\\\/:*?\"<>|\\p{Cntrl}]", "_");
+        name = name.replaceAll("\\.{2,}", ".");
+        name = name.replaceAll("^[. ]+|[. ]+$", "");
+        if (name.isEmpty()) name = fallback;
+        if (name.length() > 100) {
+            int dot = name.lastIndexOf('.');
+            String ext = dot > 0 ? name.substring(dot) : "";
+            name = name.substring(0, Math.min(90, dot > 0 ? dot : name.length())) + ext;
+        }
+        return name;
     }
 }
