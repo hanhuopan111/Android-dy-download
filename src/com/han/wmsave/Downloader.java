@@ -19,7 +19,7 @@ import java.util.Locale;
 
 /**
  * 下载并直接保存到系统相册：
- * - Android 10+ 通过 MediaStore 写入 Pictures/无水印下载（图片）、Movies/无水印下载（视频）
+ * - Android 10+ 通过 MediaStore 写入 Pictures/河岸保存（图片）、Movies/河岸保存（视频）
  * - Android 7-9 写入公共目录文件 + 媒体扫描
  */
 public class Downloader {
@@ -138,7 +138,7 @@ public class Downloader {
             ContentValues v = new ContentValues();
             v.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
             v.put(MediaStore.MediaColumns.MIME_TYPE, mime);
-            v.put(MediaStore.MediaColumns.RELATIVE_PATH, dir + "/无水印下载");
+            v.put(MediaStore.MediaColumns.RELATIVE_PATH, dir + "/河岸保存");
             v.put(MediaStore.MediaColumns.IS_PENDING, 1);
             Uri uri = isImage
                     ? ctx.getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, v)
@@ -157,7 +157,7 @@ public class Downloader {
         } else {
             // Android 7-9：写公共目录 + 媒体扫描（需要存储权限）
             String dir = isImage ? Environment.DIRECTORY_PICTURES : Environment.DIRECTORY_MOVIES;
-            File folder = new File(Environment.getExternalStoragePublicDirectory(dir), "无水印下载");
+            File folder = new File(Environment.getExternalStoragePublicDirectory(dir), "河岸保存");
             if (!folder.exists() && !folder.mkdirs()) {
                 throw new Exception("无法创建保存目录，请检查存储权限");
             }

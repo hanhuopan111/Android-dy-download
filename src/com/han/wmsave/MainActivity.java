@@ -204,7 +204,7 @@ public class MainActivity extends Activity {
                                         postProgress(downloadId, percent);
                                     }
                                 });
-                        postDone(downloadId, true, "已保存到相册（相册/无水印下载）");
+                        postDone(downloadId, true, "已保存到相册（相册/河岸保存）");
                     } catch (Exception e) {
                         postDone(downloadId, false, friendlyError(e));
                     }
@@ -241,7 +241,7 @@ public class MainActivity extends Activity {
                                 });
                         Downloader.saveToMediaStore(MainActivity.this, gif,
                                 fileName, true, null);
-                        postDone(downloadId, true, "动图已保存到相册（相册/无水印下载）");
+                        postDone(downloadId, true, "动图已保存到相册（相册/河岸保存）");
                     } catch (Exception e) {
                         postDone(downloadId, false, friendlyError(e));
                     } finally {
@@ -280,7 +280,7 @@ public class MainActivity extends Activity {
                                 });
                         Downloader.saveToMediaStore(MainActivity.this, enhanced,
                                 fileName, true, null);
-                        postDone(downloadId, true, "增强版已保存到相册（相册/无水印下载）");
+                        postDone(downloadId, true, "增强版已保存到相册（相册/河岸保存）");
                     } catch (Exception e) {
                         postDone(downloadId, false, friendlyError(e));
                     } finally {
